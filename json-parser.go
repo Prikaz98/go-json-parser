@@ -93,9 +93,6 @@ func parse(json string, pos *int, end int) (any, error) {
 }
 
 func parseArray(json string, pos *int, end int) ([]any, error) {
-	if !isBalancedBrackets(json, *pos, end) {
-		return nil, fmt.Errorf("Parse array error disbalanced pos: %d", *pos)
-	}
 	if json[*pos] != '[' {
 		return nil, fmt.Errorf("Unexpected array beggining pos: %d", *pos)
 	}
@@ -121,37 +118,11 @@ func parseArray(json string, pos *int, end int) ([]any, error) {
 	return builder, nil
 }
 
-func isBalancedBrackets(json string, pos int, end int) bool {
-	i := pos
-	target := json[i]
-	var balanced_c byte
-	balanced := false
 
-	switch target {
-	case '{':
-		balanced_c = '}'
-	case '[':
-		balanced_c = ']'
-	}
-
-	for end >= i {
-		if json[end] == balanced_c {
-			end--
-			balanced = true
-			break
-		}
-		end--
-	}
-
-	return balanced
-}
 
 func parseObject(json string, pos *int, end int) (map[string]any, error) {
 	if json[*pos] != '{' {
 		return nil, fmt.Errorf("Unexpected array beggining pos: %d", *pos)
-	}
-	if !isBalancedBrackets(json, *pos, end) {
-		return nil, fmt.Errorf("Parse body error disbalanced pos: %d", *pos)
 	}
 
 	builder := make(map[string]any)
