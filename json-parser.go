@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"os"
 )
 
 type testcase struct {
@@ -14,6 +15,23 @@ type testcase struct {
 }
 
 func main() {
+	if len(os.Args) == 2 {
+		path := os.Args[1]
+		bytes, err := os.ReadFile(path)
+		if err != nil {
+			panic(err)
+		}
+		got, err := Parse(string(bytes))
+		if err != nil {
+			panic(err)
+		}
+		fmt.Printf("%v\n", got)
+	}
+
+	runTest()
+}
+
+func runTest() {
 	tests := []testcase{
 		testcase{"empty json", "{}", make(map[string]any)},
 		testcase{"one field", "{\"name\":\"ivan\"}", map[string]any{"name": "ivan"}},
@@ -25,13 +43,15 @@ func main() {
 		},
 		testcase{"an array", "[]", make([]any, 0)},
 		testcase{"an array with string literals", "[\"Hello\",\"World\"]", []any{"Hello", "World"}},
-		testcase{"an array with objects", "[{\"name\":\"ivan\"}]", []any{map[string]any{"name":"ivan"}}},
+		testcase{"an array with objects", "[{\"name\":\"ivan\"}]", []any{map[string]any{"name": "ivan"}}},
 		testcase{"an array with empty object", "[{}]", []any{map[string]any{}}},
 		testcase{"an array with an array with empty object", "[[{}]]", []any{[]any{map[string]any{}}}},
-		testcase{"an array with objects and string literal", "[{\"name\":\"ivan\"},\"hello\"]", []any{map[string]any{"name":"ivan"}, "hello"}},
-		testcase{"object with array field", "{\"names\":[\"Vasya\",\"Ivan\"]}", map[string]any{"names":[]any{"Vasya","Ivan"}}},
-		testcase{"array of integers", "[1,2,3]", []any{1,2,3}},
-		testcase{"object with array integers field", "{\"ages\":[21,23]}", map[string]any{"ages":[]any{21,23}}},
+		testcase{"an array with objects and string literal", "[{\"name\":\"ivan\"},\"hello\"]", []any{map[string]any{"name": "ivan"}, "hello"}},
+		testcase{"object with array field", "{\"names\":[\"Vasya\",\"Ivan\"]}", map[string]any{"names": []any{"Vasya", "Ivan"}}},
+		testcase{"array of integers", "[1,2,3]", []any{1, 2, 3}},
+		testcase{"object with array integers field", "{\"ages\":[21,23]}", map[string]any{"ages": []any{21, 23}}},
+		testcase{"object with boolean value", "{\"isValid\":true}", map[string]any{"isValid": true}},
+		testcase{"object with boolean value", "{\"isValid\":false}", map[string]any{"isValid": false}},
 	}
 
 	for i := range tests {
@@ -86,37 +106,15 @@ func parseArray(json string, pos *int, end int) ([]any, error) {
 		*pos++
 
 		switch json[*pos] {
-		case '"':
-			str, err := readStringLeteral(json, pos, end)
-			if err != nil {
-				return nil, err
-			}
-			builder = append(builder, str)
-		case '[':
-			arr, err := parseArray(json, pos, end)
-			if err != nil {
-				return nil, err
-			}
-			builder = append(builder, arr)
-		case '{':
-			obj, err := parseObject(json, pos, end)
-			if err != nil {
-				return nil, err
-			}
-			builder = append(builder, obj)
+		case ',':
 		case ']':
 			return builder, nil
-		case ',':
 		default:
-			if isNumber(json[*pos]) {
-				i, err := parseNumber(json, pos, end)
-				if err != nil {
-					return nil, err
-				}
-				builder = append(builder, i)
-			} else {
-				return nil, fmt.Errorf("Unexpected char: %c", json[*pos])
+			value, err := parseValue(json, pos, end)
+			if err != nil {
+				return nil, err
 			}
+			builder = append(builder, value)
 		}
 	}
 
@@ -152,6 +150,9 @@ func parseObject(json string, pos *int, end int) (map[string]any, error) {
 	if json[*pos] != '{' {
 		return nil, fmt.Errorf("Unexpected array beggining pos: %d", *pos)
 	}
+	if !isBalancedBrackets(json, *pos, end) {
+		return nil, fmt.Errorf("Parse body error disbalanced pos: %d", *pos)
+	}
 
 	builder := make(map[string]any)
 
@@ -159,17 +160,14 @@ func parseObject(json string, pos *int, end int) (map[string]any, error) {
 		*pos++
 
 		switch json[*pos] {
-		case '{':
-			if !isBalancedBrackets(json, *pos, end) {
-				return nil, fmt.Errorf("Parse body error disbalanced pos: %d", *pos)
-			}
 		case '}':
 			return builder, nil
 		case '"':
-			err := readKeyValue(&builder, json, pos, end)
+			key, value, err := parseKeyValue(json, pos, end)
 			if err != nil {
 				return nil, err
 			}
+			builder[key] = value
 		case ',':
 		default:
 			return nil, fmt.Errorf("Unexpected char %c pos %d", json[*pos], *pos)
@@ -179,7 +177,7 @@ func parseObject(json string, pos *int, end int) (map[string]any, error) {
 	return builder, nil
 }
 
-func readStringLeteral(json string, pos *int, end int) (string, error) {
+func parseString(json string, pos *int, end int) (string, error) {
 	if json[*pos] != '"' {
 		return "", fmt.Errorf("Unexpected literal beggining pos: %d", *pos)
 	}
@@ -229,43 +227,65 @@ func parseNumber(json string, pos *int, end int) (int, error) {
 	return strconv.Atoi(number.String())
 }
 
-func readKeyValue(builder *map[string]any, json string, pos *int, end int) error {
-	key, err := readStringLeteral(json, pos, end)
+func parseKeyValue(json string, pos *int, end int) (string, any, error) {
+	key, err := parseString(json, pos, end)
 	if err != nil {
-		return err
+		return "", nil, err
 	}
 	*pos++
 
 	if json[*pos] != ':' {
-		return fmt.Errorf("Invalid key value pair %d", *pos)
+		return "", nil, fmt.Errorf("Invalid key value pair %d", *pos)
 	}
 	*pos++
 
-	var value any
-
-	switch json[*pos] {
-	case '{':
-		obj, err := parseObject(json, pos, end)
-		if err != nil {
-			return err
-		}
-		value = obj
-	case '[':
-		arr, err := parseArray(json, pos, end)
-		if err != nil {
-			return err
-		}
-		value = arr
-	case '"':
-		str, err := readStringLeteral(json, pos, end)
-		if err != nil {
-			return err
-		}
-		value = str
-	default:
-		return fmt.Errorf("Unexpected char on pos", *pos)
+	value, err := parseValue(json, pos, end)
+	if err != nil {
+		return "", nil, err
 	}
 
-	(*builder)[key] = value
-	return nil
+	return key, value, nil
+}
+
+func parseBoolean(json string, pos *int) (bool, error) {
+	switch json[*pos] {
+	case 't':
+		str_true := json[*pos:(*pos + 4)]
+		if str_true == "true" {
+			*pos = *pos + 3
+			return true, nil
+		} else {
+			return false, fmt.Errorf("Failed parse boolean true value %v", str_true)
+		}
+	case 'f':
+		str_false := json[*pos:(*pos + 5)]
+		if str_false == "false" {
+			*pos = *pos + 4
+			return false, nil
+		} else {
+			return false, fmt.Errorf("Failed parse boolean false value %v", str_false)
+		}
+	default:
+		return false, fmt.Errorf("Failed parse boolean value pos %d", *pos)
+	}
+}
+
+func parseValue(json string, pos *int, end int) (any, error) {
+	switch json[*pos] {
+	case '{':
+		return parseObject(json, pos, end)
+	case '[':
+		return parseArray(json, pos, end)
+	case '"':
+		return parseString(json, pos, end)
+	case 't':
+		return parseBoolean(json, pos)
+	case 'f':
+		return parseBoolean(json, pos)
+	default:
+		if isNumber(json[*pos]) {
+			return parseNumber(json, pos, end)
+		}
+		return nil, fmt.Errorf("Unexpected char on pos", *pos)
+	}
 }
