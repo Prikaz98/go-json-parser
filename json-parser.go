@@ -3,9 +3,9 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"reflect"
 	"strconv"
-	"os"
 )
 
 type testcase struct {
@@ -14,6 +14,7 @@ type testcase struct {
 	out  any
 }
 
+// TODO: ignore whitespace
 func main() {
 	if len(os.Args) == 2 {
 		path := os.Args[1]
@@ -118,8 +119,6 @@ func parseArray(json string, pos *int, end int) ([]any, error) {
 	return builder, nil
 }
 
-
-
 func parseObject(json string, pos *int, end int) (map[string]any, error) {
 	if json[*pos] != '{' {
 		return nil, fmt.Errorf("Unexpected array beggining pos: %d", *pos)
@@ -155,13 +154,21 @@ func parseString(json string, pos *int, end int) (string, error) {
 
 	var key bytes.Buffer
 	closed := false
+	escaped := false
 
 	for *pos < end && !closed {
 		*pos++
 
 		switch json[*pos] {
+		case '\\':
+			escaped = true
 		case '"':
-			closed = true
+			if escaped {
+				escaped = false
+				key.WriteByte(json[*pos])
+			} else {
+				closed = true
+			}
 		default:
 			if !closed {
 				key.WriteByte(json[*pos])
@@ -187,7 +194,7 @@ func parseNumber(json string, pos *int, end int) (int, error) {
 		case isNumber(next):
 			number.WriteByte(next)
 			*pos++
-		case next == ',' || next == ']':
+		case next == ',' || next == ']' || next == '}':
 			*pos--
 			closed = true
 		default:
@@ -249,9 +256,7 @@ func parseValue(json string, pos *int, end int) (any, error) {
 		return parseArray(json, pos, end)
 	case '"':
 		return parseString(json, pos, end)
-	case 't':
-		return parseBoolean(json, pos)
-	case 'f':
+	case 't', 'f':
 		return parseBoolean(json, pos)
 	default:
 		if isNumber(json[*pos]) {
